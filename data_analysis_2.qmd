@@ -1,0 +1,143 @@
+---
+title: "data_analysis_2"
+format: html
+editor: visual
+---
+
+## Running Code
+
+When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
+
+```{r}
+1 + 1
+```
+
+You can add options to executable code like this
+
+```{r}
+#| echo: false
+2 * 2
+```
+
+The `echo: false` option disables the printing of code (only output is displayed).
+
+```{r}
+library(dplyr)
+library(tidyverse)
+library(corrplot)
+library(GGally)
+df=read.csv("C:/Users/3165152Z/Downloads/dataset11.csv")
+
+```
+
+```{r}
+colSums(is.na(df))
+```
+
+```{r}
+# omit the NA
+coffee<- na.omit(df)
+
+```
+
+```{r}
+# some data have extremely high altitude which i suppose to be mistake
+coffee=coffee[coffee$altitude_mean_meters<5000,]
+```
+
+```{r}
+pairs(coffee[,c(2,3,4,5,6)],pch=20,lower.panel = NULL)
+```
+
+```{r}
+# Factorize
+coffee$Qualityclass <- as.factor(coffee$Qualityclass)
+coffee$Qualityclass <- factor(coffee$Qualityclass, levels = c("Poor", "Good"))
+```
+
+```{r}
+ggplot(coffee, aes(x = aroma, fill = Qualityclass)) +
+     geom_histogram(alpha = 0.6, position = "identity", bins = 20) +
+     theme_minimal()
+ggplot(coffee, aes(x = flavor, fill = Qualityclass)) +
+     geom_histogram(alpha = 0.6, position = "identity", bins = 20) +
+     theme_minimal()
+ggplot(coffee, aes(x = acidity, fill = Qualityclass)) +
+     geom_histogram(alpha = 0.6, position = "identity", bins = 20) +
+     theme_minimal()
+ggplot(coffee, aes(x = category_two_defects, fill = Qualityclass)) +
+     geom_histogram(alpha = 0.6, position = "identity", bins = 20) +
+     theme_minimal()
+ggplot(coffee, aes(x = altitude_mean_meters, fill = Qualityclass)) +
+     geom_histogram(alpha = 0.6, position = "identity", bins = 20) +
+     theme_minimal()
+ggplot(coffee, aes(x = harvested, fill = Qualityclass)) +
+     geom_histogram(alpha = 0.6, position = "identity", bins = 20) +
+     theme_minimal()
+```
+
+```{r}
+ggplot(coffee, aes(x = Qualityclass, y = aroma)) +
+    geom_boxplot() +
+    labs(x = "Qualityclass", y = "aroma",
+         title = "Qualityclass by aroma")
+ggplot(coffee, aes(x = Qualityclass, y = flavor)) +
+    geom_boxplot() +
+    labs(x = "Qualityclass", y = "flavor",
+         title = "Qualityclass by flavor")
+ggplot(coffee, aes(x = Qualityclass, y = acidity)) +
+    geom_boxplot() +
+    labs(x = "Qualityclass", y = "acidity",
+         title = "Qualityclass by acidity")
+ggplot(coffee, aes(x = Qualityclass, y = category_two_defects)) +
+    geom_boxplot() +
+    labs(x = "Qualityclass", y = "category_two_defects",
+         title = "Qualityclass by category_two_defects")
+ggplot(coffee, aes(x = Qualityclass, y = altitude_mean_meters)) +
+    geom_boxplot() +
+    labs(x = "Qualityclass", y = "altitude_mean_meters",
+         title = "Qualityclass by altitude_mean_meters")
+ggplot(coffee, aes(x = Qualityclass, y = harvested)) +
+    geom_boxplot() +
+    labs(x = "Qualityclass", y = "harvested",
+         title = "Qualityclass by harvested")
+```
+
+```{r}
+library(car)
+model <- glm(Qualityclass ~ aroma + flavor+acidity + category_two_defects +
+             altitude_mean_meters + harvested,
+             data = coffee, family = binomial(link = "logit"))
+vif(model)
+summary(model)
+```
+
+```{r}
+# stepwise selecting model via AIC
+null_model <- glm(Qualityclass ~ 1,
+                  data = coffee,
+                  family = binomial)
+step_model <- step(null_model, 
+                   scope = list(lower = null_model, upper = model),
+                   direction = "both",
+                   trace = TRUE)
+summary(step_model)
+```
+
+```{r}
+library(broom)
+library(kableExtra)
+
+tidy(step_model, conf.int = TRUE, exponentiate = TRUE) |>
+  mutate(across(where(is.numeric), \(x) round(x, 3))) |>
+  kbl(col.names = c("Term", "OR", "SE", "z", "p", "CI low", "CI high"),
+      caption = "Logistic regression -- odds ratios with 95% CIs") |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+```{r}
+library(sjPlot)
+
+# Coefficient plot with CIs
+plot_model(step_model, type = "est", show.values = TRUE)
+```
