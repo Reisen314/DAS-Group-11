@@ -1,0 +1,13 @@
+# Quarto 
+*_files/
+*.html
+*.png
+*.jpg
+*.jpeg
+*.css
+*.js
+
+# R 
+.Rproj.user
+.Rhistory
+.RData
