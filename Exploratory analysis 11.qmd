@@ -1,0 +1,327 @@
+---
+title: "coffee quality group_11"
+format: html
+editor: visual
+---
+
+## Exploratory Analysis
+
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+#load the packages
+library(tidyverse)
+library(naniar) 
+library(ggplot2)
+library(tidyr)
+library(skimr)
+library(knitr)
+library(dplyr)
+library(kableExtra)
+library(gridExtra)
+library(grid)
+library(GGally)
+```
+
+```{r data cleaning}
+#| echo: false
+#| warning: false
+#| message: false
+#| results: 'hide'
+data <- read.csv("D:/Study/Glasgow/das/group project 2/dataset11.csv")
+glimpse(data)
+#missing values information
+summary(data)
+miss_var_summary(data)
+
+#remove missing values in harvested and country_of_origin
+coffeedata <- data %>%
+  drop_na(harvested, country_of_origin)
+nrow(coffeedata)
+summary(coffeedata)
+
+#remove unreasonable values in altitude
+coffeedata <- coffeedata%>%
+  filter(altitude_mean_meters < 10000 | is.na(altitude_mean_meters))
+nrow(coffeedata)
+
+#add a new column to calssify the altityde_mean_meters
+coffeedata <- coffeedata %>%
+  mutate(
+    altitude_group = case_when(
+      is.na(altitude_mean_meters) ~ "missing altitude",
+      altitude_mean_meters < 900 ~ "lower altitude",
+      altitude_mean_meters < 1200 ~ "middle altitude",
+      altitude_mean_meters < 1500 ~ "upper-middle altitude",
+      TRUE ~ "upper altitude"
+    )
+  )
+
+#add a new column to convert qualityclass into 0/1 Binary variable
+coffeedata <- coffeedata %>%
+  mutate(quality_bin = case_when(
+      Qualityclass == "Good" ~ 1,
+      Qualityclass == "Poor" ~ 0))
+glimpse(coffeedata)
+
+#add a new column to save the log transformation of category_two_defects
+coffeedata$log_defects <- log(ifelse(coffeedata$category_two_defects==0, coffeedata$category_two_defects + 1,coffeedata$category_two_defects))
+
+#check the type of all variables
+str(coffeedata)
+
+# convert harvested into factor
+coffeedata$harvested <- as.factor(coffeedata$harvested)
+
+#save the cleaned data
+#write.csv(coffeedata, "coffeedata_clean.csv", row.names = FALSE)
+```
+
+First, we performed data preprocessing to prepare the dataset for analysis. The original categorical variable Qualityclass was recoded into a binary variable quality_bin, where "Poor" quality was coded as 0 and "Good" as 1, to serve as the binary outcome for logistic regression. The harvested variable, originally an integer representing harvest year, was converted to a categorical factor. Additionally, altitude_mean_meters was grouped into five categories (lower altitude, middle altitude, upper-middle altitude, upper altitude, and missing altitude) to explore non-linear relationships between elevation and coffee quality. Note that there are approximately 14% missing values in the variable of altitude. To avoid sample size loss and eliminate confounding interference caused by missing altitude information, it is set as an independent group for subsequent analysis. No missing values were present in the key variables used for modeling.
+
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+#| label: tbl-description-of-categorical-variables
+#| tbl-cap: Description of categorical variables
+#| 
+#description of categorical variables
+coffeedata %>%
+  select(quality_bin, altitude_group, harvested) %>%
+  purrr::map_dfr(~ table(.x) %>% as.data.frame(), .id = "Variable") %>%
+  rename(Category = .x, Frequency = Freq) %>%
+  select(Variable, Category, Frequency) %>%
+  
+  kable(align = "ccc",booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position",
+    font_size = 11) %>%
+  row_spec(0, align = "center")  
+```
+
+@tbl-description-of-categorical-variables shows the frequency of three categorical variables. The binary variable quality_bin is nearly balanced, with 509 poor-quality(0) and 527 good-quality(1) samples, ensuring a robust baseline for logistic regression. For mean-altitude of the growers farm(in meters), most samples are concentrated at higher elevations: upper altitude has 321 samples and upper-middle altitude has 315 samples, indicating a potential focus on high-altitude coffee production. Samples in lower and middle altitude groups are smaller,which is 117 and 139. 144 samples have missing altitude data, which is used as the reference group. Harvest year span 2010-2018, with the largest concentrations in 2012-2014, respectively has 283, 148 and 215 samples. Fewer samples in early(2010-2011) and late(2017-2018) years.
+
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+#| label: tbl-summary-of-quantitative-variables
+#| tbl-cap: summary of quantitative variables
+#summary of the quantitative variables
+vars <- c("aroma", "flavor", "acidity", "category_two_defects")
+data.frame(
+  Mean = apply(coffeedata[vars], 2, function(x) round(mean(x, na.rm=T), 2)),
+  Median = apply(coffeedata[vars], 2, function(x) round(median(x, na.rm=T), 2)),
+  SD = apply(coffeedata[vars], 2, function(x) round(sd(x, na.rm=T), 2)),
+  Min = apply(coffeedata[vars], 2, function(x) round(min(x, na.rm=T), 2)),
+  Max = apply(coffeedata[vars], 2, function(x) round(max(x, na.rm=T), 2)),
+  IQR = apply(coffeedata[vars], 2, function(x) round(IQR(x, na.rm=T), 2))) %>%
+  rownames_to_column("Variable") %>%
+  kable(align = "ccccccc",booktabs=TRUE) %>%
+  kable_styling()
+```
+
+@tbl-summary-of-quantitative-variables shows the descriptive statistics of the key quantitative variables of coffee samples, including three sensory quality indicators and one defect count indicator.
+Aroma scores fall in a moderate-to-high range with a mean value of 7.57 and a median value of 7.58. The standard deviation is 0.32 and the IQR is 0.33, both is the lowest among all variables, indicating minimal variation between samples and stable aroma performance across the dataset.
+
+Flavor scores show a similar moderate-to-high level with a mean of 7.52 and a median of 7.58. The standard deviation is 0.34 and the IQR is 0.42, reflecting weak differences in flavor characteristics among different samples.
+
+Acidity also maintains a moderate-to-high scoring level, with a mean of 7.54 and a median of 7.58, while the standard deviations of 0.32 and IQR of 0.42. That point to a highly consistent acidity performance across all coffee samples.
+
+The count of category_two_defects performs an obvious right-skewed distribution with a mean of 3.55 and a median of 2. The standard deviation reaches 5.15 and the maximum value is 45, revealing significant variation in defect counts between samples and the presence of extreme high defect samples.
+
+Overall, the three sensory quality indicators of the coffee samples all show well at a moderate-to-high level with low dispersion and high consistency, while the category two defect count shows strong heterogeneity with a right-skewed distribution and extreme values, maybe log transformation is needed.
+
+```{r}
+#| label: fig-boxplot-quantitative-variables
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-align: center
+#| fig-cap: Boxolot of aroma,flavor and acidity
+# Function of getting legend from a plot
+get_legend <- function(p){
+  g <- ggplotGrob(p)
+  for (i in seq_along(g$grobs)){
+    if (g$grobs[[i]]$name == "guide-box"){
+      return(g$grobs[[i]])
+    }
+  }
+}
+#create a color for the plot
+my_color <- c("#4292db", "#E8785A")
+p1 <- coffeedata %>%
+  ggplot(aes(x = factor(Qualityclass,
+                        labels=c("Poor","Good")),
+             y = aroma,
+             fill=factor(Qualityclass)))+
+  scale_fill_manual(values = my_color)+
+  geom_boxplot(alpha=0.7)+
+  labs(x="Qualityclass", y="Aroma", fill="Qualityclass")+
+  theme(panel.background = element_rect(fill = "white", color = NA),
+        panel.grid.major = element_line(color = "gray90"),
+        axis.title = element_text(size = 8))
+
+p2 <- coffeedata %>%
+  ggplot(aes(x = factor(Qualityclass,
+                        labels=c("Poor","Good")),
+             y =flavor,
+             fill=factor(Qualityclass)))+
+  scale_fill_manual(values = my_color)+
+  geom_boxplot(alpha=0.7)+
+  labs(x="Qualityclass", y="Flavor", fill="Qualityclass")+
+  theme(panel.background = element_rect(fill = "white", color = NA),
+        panel.grid.major = element_line(color = "gray90"),
+        axis.title = element_text(size = 8)) 
+
+p3 <- coffeedata %>%
+  ggplot(aes(x = factor(Qualityclass,
+                        labels=c("Poor","Good")),
+             y = acidity,
+             fill=factor(Qualityclass)))+
+  scale_fill_manual(values = my_color)+
+  geom_boxplot(alpha=0.7)+
+  labs(x="Qualityclass", y="Acidity", fill="Qualityclass")+
+  theme(panel.background = element_rect(fill = "white", color = NA),
+        panel.grid.major = element_line(color = "gray90"),
+        axis.title = element_text(size = 8))
+
+# Get a legend
+legend_boxplot <- get_legend(p1)
+
+# Remove all the legends
+p1 <- p1 + theme(legend.position = "none")
+p2 <- p2 + theme(legend.position = "none")
+p3 <- p3 + theme(legend.position = "none")
+
+# Create a panel
+panel_coffee_boxplot <- arrangeGrob(p1, p2, p3, ncol = 3)
+
+# Draw the plot
+grid.draw(panel_coffee_boxplot)
+```
+This set of boxplots clearly illustrates the real differences in aroma, flavor, acidity, and defect count between high-quality coffee and low-quality coffee. The overall level of aroma, flavor, and acidity in the high-quality group is higher, the data distribution is more concentrated, and the quality performance is more stable. The sensory indicators of the low-quality group are significantly lower, and the number of defects is much higher than that of the high-quality group, with greater data fluctuations and more outliers. Overall, these variables can effectively distinguish the quality level of coffee and provide intuitive basis for subsequent statistical analysis.
+
+```{r}
+#| label: fig-pairplot
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-align: center
+#| fig-cap: pair plot of aroma, flavor and acidity
+
+coffeedata %>%
+  select(aroma, flavor, acidity) %>%
+  ggpairs()+
+  theme_bw()+
+  theme(panel.background = element_rect(fill = "white"),
+        panel.grid = element_blank())
+```
+@fig-pairplot performs that there is a significant positive correlation between the three sensory indicators of coffee aroma, flavor, and acidity, with correlation coefficients above 0.6. The distribution of each variable is concentrated and the shape is stable. This high correlation suggests that we should pay attention to multicollinearity issues to ensure the stability and reliability of model parameter estimation.
+
+```{r}
+#| label: fig-density-boxplot-defects
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-align: center
+#| fig-cap: Density plot and Boxplot of defects before and after log transformation
+
+density_original <-ggplot(coffeedata, aes(x = category_two_defects)) +
+  geom_density(fill = "#4292db", alpha = 0.5) +
+  labs(title = "Original Defects Density") +
+  theme_minimal()
+
+density_log <- ggplot(coffeedata, aes(x = log_defects)) +
+  geom_density(fill = "#E8785A", alpha = 0.5) +
+  labs(title = "Log Defects Density") +
+  theme_minimal()
+
+box_original <- coffeedata %>%
+  ggplot(aes(x = factor(Qualityclass,
+                        labels=c("Poor","Good")),
+             y = category_two_defects,
+             fill=factor(Qualityclass)))+
+  scale_fill_manual(values = my_color)+
+  geom_boxplot(alpha=0.7)+
+  labs(x="Qualityclass", y="Category_two_defects", fill="Qualityclass")+
+  theme(panel.background = element_rect(fill = "white", color = NA),
+        panel.grid.major = element_line(color = "gray90"),
+        axis.title = element_text(size = 8)) 
+
+box_log <- coffeedata %>%
+  ggplot(aes(x = factor(Qualityclass,
+                        labels=c("Poor","Good")),
+             y = log_defects,
+             fill=factor(Qualityclass)))+
+  scale_fill_manual(values = my_color)+
+  geom_boxplot(alpha=0.7)+
+  labs(x="Qualityclass", y="Log_defects", fill="Qualityclass")+
+  theme(panel.background = element_rect(fill = "white", color = NA),
+        panel.grid.major = element_line(color = "gray90"),
+        axis.title = element_text(size = 8)) 
+
+# Get a legend
+legend_boxplot <- get_legend(box_log)
+
+# Remove all the legends
+box_original <- box_original + theme(legend.position = "none")
+box_log <- box_log + theme(legend.position = "none")
+
+# Create a panel
+panel_coffee_defects <- arrangeGrob(density_original, density_log,
+                                    box_original, box_log, ncol = 2)
+
+# Draw the plot
+grid.draw(panel_coffee_defects)
+```
+@fig-density-boxplot-defects highlights the distribution characteristics and inter group differences of category_two_defects in the batch of coffee tested before and after logarithmic transformation. The original defects count shows a severe right skewed distribution, with a large number of extreme values, making it difficult to visually reflect the differences between groups in the box plot. After logarithmic transformation, the skewness of the data is significantly reduced, and the distribution becomes more concentrated and symmetrical. The transformed boxplot clearly reveals that the median number of defects in the Poor group is higher than that in the Good group, and the differences between groups are more distinct. This not only preserves the core information of the data, but also provides a more reasonable distribution pattern for subsequent statistical modeling.
+
+```{r}
+#| label: fig-barplot
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-align: center
+#| fig-cap: Bar plot of harvested year and altitude_group
+
+bar_harvested <- coffeedata %>%
+  ggplot(aes(x = factor(harvested), fill = factor(Qualityclass, labels = c("Poor","Good")))) +
+  geom_bar(position = "dodge", alpha = 0.8) +
+  scale_fill_manual(values = my_color) +
+  labs(x = "Harvest Year", y = "Count", fill = "Quality") +
+  theme(panel.background = element_rect(fill = "white", color = NA),
+        panel.grid.major = element_line(color = "gray90"),
+        axis.title = element_text(size = 9),
+        legend.position = "none")
+
+bar_altitude <- coffeedata %>%
+  ggplot(aes(x = factor(altitude_group), fill = factor(Qualityclass, labels = c("Poor","Good")))) +
+  geom_bar(position = "dodge", alpha = 0.8) +
+  scale_x_discrete(labels = c("missing", "low", "middle",'upper-middle','upper')) +
+  scale_fill_manual(values = my_color) +
+  labs(x = "Altitude Group", y = "Count", fill = "Quality") +
+  theme(panel.background = element_rect(fill = "white", color = NA),
+        panel.grid.major = element_line(color = "gray90"),
+        axis.title = element_text(size = 9),
+        legend.position = "none")
+
+#add a legend for the plot
+add_legend <- get_legend(
+  ggplot(coffeedata, aes(fill = factor(Qualityclass))) +
+    geom_bar(aes(x = harvested)) +
+    scale_fill_manual(values = my_color, labels = c("Poor","Good")) +
+    labs(fill = "Quality") +
+    theme(legend.position = "bottom"))
+
+#combine these two bar plots
+panel_plots <- arrangeGrob(bar_harvested, bar_altitude, ncol = 2)
+
+#add the legend
+final_plot <- arrangeGrob(panel_plots, add_legend, nrow = 2, heights = c(8,1))
+
+# draw the plot
+grid.draw(final_plot)
+```
+@fig-barplot clearly shows the distribution differences of coffee quality in harvest years and altitude gradients. On the year dimension, the quantity of high-quality coffee and low-quality coffee fluctuates between different years, with some years having a higher proportion of high-quality coffee, reflecting the quality differences between years. In terms of altitude, there are significantly more low-quality coffee in high-altitude areas, and high-quality coffee is also concentrated in the mid to high altitude range, while the quality distribution is relatively balanced in samples with low altitude and missing altitude data. Overall, the correlation between altitude gradient and coffee quality is more intuitive, and the quality differentiation of high-altitude samples is more significant. The year reflects the annual fluctuation characteristics of quality.
