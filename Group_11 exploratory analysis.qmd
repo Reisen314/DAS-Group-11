@@ -60,21 +60,18 @@ coffeedata <- coffeedata %>%
 
 #add a new column to convert qualityclass into 0/1 Binary variable
 coffeedata <- coffeedata %>%
-  mutate(
-    quality_bin = case_when(
+  mutate(quality_bin = case_when(
       Qualityclass == "Good" ~ 1,
-      Qualityclass == "Poor" ~ 0
-    )
-  )
+      Qualityclass == "Poor" ~ 0))
 glimpse(coffeedata)
 
 #add a new column to save the log transformation of category_two_defects
-coffeedata$log_defects <- log(ifelse(coffeedata$category_two_defects == 0, 
-                                     coffeedata$category_two_defects + 1, 
-                                     coffeedata$category_two_defects))
+coffeedata$log_defects <- log(ifelse(coffeedata$category_two_defects==0, coffeedata$category_two_defects + 1,coffeedata$category_two_defects))
+
 #check the type of all variables
 str(coffeedata)
-# convert harvested into string
+
+# convert harvested into factor
 coffeedata$harvested <- as.factor(coffeedata$harvested)
 
 #save the cleaned data
