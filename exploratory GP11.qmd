@@ -24,13 +24,12 @@ library(grid)
 library(GGally)
 ```
 
-
 ```{r data cleaning}
 #| echo: false
 #| warning: false
 #| message: false
 #| results: 'hide'
-data <- read.csv("D:/Study/Glasgow/das/group project 2/dataset11.csv")
+data <- read.csv("C:/Users/3165152Z/Downloads/dataset11.csv")
 glimpse(data)
 #missing values information
 summary(data)
@@ -126,8 +125,7 @@ data.frame(
   kable_styling()
 ```
 
-@tbl-summary-of-quantitative-variables shows the descriptive statistics of the key quantitative variables of coffee samples, including three sensory quality indicators and one defect count indicator.
-Aroma scores fall in a moderate-to-high range with a mean value of 7.57 and a median value of 7.58. The standard deviation is 0.32 and the IQR is 0.33, both is the lowest among all variables, indicating minimal variation between samples and stable aroma performance across the dataset.
+@tbl-summary-of-quantitative-variables shows the descriptive statistics of the key quantitative variables of coffee samples, including three sensory quality indicators and one defect count indicator. Aroma scores fall in a moderate-to-high range with a mean value of 7.57 and a median value of 7.58. The standard deviation is 0.32 and the IQR is 0.33, both is the lowest among all variables, indicating minimal variation between samples and stable aroma performance across the dataset.
 
 Flavor scores show a similar moderate-to-high level with a mean of 7.52 and a median of 7.58. The standard deviation is 0.34 and the IQR is 0.42, reflecting weak differences in flavor characteristics among different samples.
 
@@ -205,6 +203,8 @@ panel_coffee_boxplot <- arrangeGrob(p1, p2, p3, ncol = 3)
 # Draw the plot
 grid.draw(panel_coffee_boxplot)
 ```
+
+@fig-boxplot-quantitative-variables
 
 This set of boxplots clearly illustrates the real differences in aroma, flavor, acidity, and defect count between high-quality coffee and low-quality coffee. The overall level of aroma, flavor, and acidity in the high-quality group is higher, the data distribution is more concentrated, and the quality performance is more stable. The sensory indicators of the low-quality group are significantly lower, and the number of defects is much higher than that of the high-quality group, with greater data fluctuations and more outliers. Overall, these variables can effectively distinguish the quality level of coffee and provide intuitive basis for subsequent statistical analysis.
 
@@ -333,4 +333,3 @@ grid.draw(final_plot)
 ```
 
 @fig-barplot clearly shows the distribution differences of coffee quality in harvest years and altitude gradients. On the year dimension, the quantity of high-quality coffee and low-quality coffee fluctuates between different years, with some years having a higher proportion of high-quality coffee, reflecting the quality differences between years. In terms of altitude, there are significantly more low-quality coffee in high-altitude areas, and high-quality coffee is also concentrated in the mid to high altitude range, while the quality distribution is relatively balanced in samples with low altitude and missing altitude data. Overall, the correlation between altitude gradient and coffee quality is more intuitive, and the quality differentiation of high-altitude samples is more significant. The year reflects the annual fluctuation characteristics of quality.
-
