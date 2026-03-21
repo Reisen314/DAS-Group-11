@@ -1,0 +1,225 @@
+---
+title: "FDA_GP11"
+format: 
+  html:
+    toc: true
+    toc-location: left
+    toc-title: "Outline"
+    number-sections: true
+    smooth-scroll: true
+    page-layout: article
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(naniar) 
+library(ggplot2)
+library(tidyr)
+library(skimr)
+library(knitr)
+library(dplyr)
+library(kableExtra)
+library(gridExtra)
+library(grid)
+library(GGally)
+```
+
+# Transition from EDA to modelling
+
+Based on the exploratory analysis, the response variable is approximately balanced, several predictors show clear differences across quality groups, and some continuous variables exhibit skewness or correlation. Therefore, we proceed to fit a binomial Generalised Linear Model (logistic regression) to investigate which factors influence the probability of a coffee batch being classified as good quality.
+
+# Model Specification
+
+```{r data cleaning}
+#| echo: false
+#| warning: false
+#| message: false
+#| results: 'hide'
+#| include: false
+data <- read.csv("dataset11.csv")
+glimpse(data)
+summary(data)
+#check the information of missing values
+miss_var_summary(data)
+
+#remove missing values
+coffeedata <- data %>%
+  drop_na(harvested, country_of_origin,altitude_mean_meters)
+miss_var_summary(coffeedata)
+
+#find the unreasonable values in altitude_mean_meters
+ggplot(coffeedata, aes(x = 1, y = altitude_mean_meters)) +
+  geom_point(size = 1.5)
+
+#It is clear that there are two points higher than 100000 meters, which is unreasonable for planting coffee. So we have to remove them.
+coffeedata <- coffeedata%>%
+  filter(altitude_mean_meters < 10000 | is.na(altitude_mean_meters))
+
+#histogram and box plot about the distribution and outliers of altitude_mean_meters
+ggplot(coffeedata, aes(x = altitude_mean_meters)) +
+  geom_histogram(bins = 30, color = "black", fill = "gray80") +
+  labs(title = "Distribution of Coffee Planting Altitude",
+       x = "Altitude (meters)",
+       y = "Frequency") +
+  theme_minimal()
+#from the distribution of altitude_mean_meters, on the right side (approximately greater than 2500 meters), there is a long tail feature and the sample size is extremely small.
+ggplot(coffeedata, aes(y = altitude_mean_meters)) +
+  geom_boxplot(fill = "gray80", width = 0.3) +
+  geom_hline(yintercept = 2500, color = "red", linetype = "dashed", linewidth = 1) +
+  labs(title = "Boxplot of Coffee Planting Altitude",
+       y = "Altitude (meters)") +
+  theme_minimal() +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+sum(coffeedata$altitude_mean_meters >= 2500, na.rm = TRUE)
+
+#Here we found through research that the maximum height for conventional coffee cultivation is 2500 meters. From the box plot we can also find there are only 12 samples over 2500 meter, which are outliers, so we can delete them.
+coffeedata <- coffeedata %>%
+  filter(altitude_mean_meters < 2500 | is.na(altitude_mean_meters))
+
+#Considering the impact of variable numerical scale on model estimation, the altitude is converted from meters to kilometers to reduce the difference in variable magnitude.
+coffeedata$altitude_km <- coffeedata$altitude_mean_meters / 1000
+
+#remove unnecessary columns
+coffeedata <- coffeedata %>% 
+  select(-country_of_origin, -altitude_mean_meters)
+
+#For logistic regression models, the dependent variable should be of factor type. but the Qualityclass is chr type, so we have to turn it into factor.
+coffeedata$Qualityclass <- factor(
+  coffeedata$Qualityclass,
+  levels = c("Poor", "Good")
+)
+str(coffeedata)
+
+```
+
+# Initial logistic regression model
+
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+#| tbl-cap: coefficient of full model
+model_full <- glm(
+  Qualityclass ~ aroma + flavor + acidity +
+                category_two_defects +
+                altitude_km +
+                harvested,
+  family = binomial(link = "logit"),
+  data = coffeedata
+)
+
+library(broom)
+
+coef_table <- tidy(model_full) %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  rename(
+    Term = term,
+    Estimate = estimate,
+    `Std. Error` = std.error,
+    `z value` = statistic,
+    `p value` = p.value
+  )
+
+coef_table %>%
+  kable(
+    caption = "Coefficient estimates for the initial logistic regression model",
+    align = "ccccc",
+    booktabs = TRUE,
+    digits = 3
+  ) %>%
+  kable_styling(
+    latex_options = "hold_position",
+    font_size = 11
+  ) %>%
+  row_spec(0, align = "center")
+```
+
+A binomial GLM with logit link was fitted to investigate how sensory attributes, defect counts, altitude groups and harvest year influence the probability of a coffee batch being classified as good quality.
+
+To assess whether the predictors included in the initial logistic regression model exhibit problematic multicollinearity, Variance Inflation Factors (VIFs) were calculated. This is particularly relevant because the exploratory analysis suggested relatively strong positive correlations among aroma, flavor and acidity.
+
+# Model selection
+
+```{r}
+# stepwise selecting model via AIC
+null_model <- glm(Qualityclass ~ 1,
+                  data = coffeedata,
+                  family = binomial)
+step_model <- step(null_model, 
+                   scope = list(lower = null_model, upper = model_full),
+                   direction = "both",
+                   trace = TRUE)
+summary(step_model)
+```
+
+# Multicollinearity check
+
+```{r}
+library(car)
+vif_values <- vif(step_model)
+vif_table <- data.frame(
+  Variable = names(vif_values),
+  VIF=as.numeric(vif_values)
+)
+
+vif_table %>%
+  kable(
+    caption = "Variance Inflation Factors for the initial logistic regression model",
+    align = "cccc",
+    booktabs = TRUE,
+    digits = 3
+  ) %>%
+  kable_styling(
+    latex_options = "hold_position",
+    font_size = 11
+  ) %>%
+  row_spec(0, align = "center")
+```
+
+Table X presents the VIF values for all predictors included in the initial model. Overall, the sensory variables show comparatively larger VIF values than the remaining predictors, which is consistent with the correlation patterns observed in the exploratory analysis. These results suggest that multicollinearity should be taken into account in subsequent model refinement.
+
+# Visualising model fit
+
+## Fitted Probability vs Observed
+
+```{r}
+coffeedata$pred_prob <- predict(step_model, type = "response")
+
+ggplot(coffeedata, aes(x = pred_prob, y = factor(Qualityclass))) +
+  geom_jitter(height = 0.1, alpha = 0.4) +
+  labs(
+    title = "Predicted probability vs observed coffee quality",
+    x = "Predicted probability of good coffee",
+    y = "Observed quality class"
+  ) +
+  theme_minimal()
+```
+
+## Residual Plot
+
+```{r}
+res <- residuals(step_model, type = "deviance")
+fit <- fitted(step_model)
+
+ggplot(data.frame(fit, res), aes(x = fit, y = res)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(se = FALSE) +
+  labs(
+    title = "Deviance residuals vs fitted values",
+    x = "Fitted probability",
+    y = "Deviance residuals"
+  ) +
+  theme_minimal()
+```
+
+# Interpretation of model coefficients
+
+## Odds ratio
+
+```{r}
+library(sjPlot)
+
+# Coefficient plot with CIs
+plot_model(step_model, type = "est", show.values = TRUE)
+```
