@@ -1,5 +1,5 @@
 ---
-title: "coffee quality group_11"
+title: "exploratory GP11"
 format: html
 editor: visual
 ---
@@ -23,6 +23,7 @@ library(gridExtra)
 library(grid)
 library(GGally)
 ```
+
 
 ```{r data cleaning}
 #| echo: false
@@ -83,7 +84,7 @@ coffeedata$harvested <- as.factor(coffeedata$harvested)
 
 First, we performed data preprocessing to prepare the dataset for analysis. The original categorical variable Qualityclass was recoded into a binary variable quality_bin, where "Poor" quality was coded as 0 and "Good" as 1, to serve as the binary outcome for logistic regression. The harvested variable, originally an integer representing harvest year, was converted to a categorical factor. Additionally, altitude_mean_meters was grouped into five categories (lower altitude, middle altitude, upper-middle altitude, upper altitude, and missing altitude) to explore non-linear relationships between elevation and coffee quality. Note that there are approximately 14% missing values in the variable of altitude. To avoid sample size loss and eliminate confounding interference caused by missing altitude information, it is set as an independent group for subsequent analysis. No missing values were present in the key variables used for modeling.
 
-```{r}
+```{r description table}
 #| echo: false
 #| warning: false
 #| message: false
@@ -99,13 +100,13 @@ coffeedata %>%
   
   kable(align = "ccc",booktabs = TRUE) %>%
   kable_styling(latex_options = "hold_position",
-    font_size = 11) %>%
-  row_spec(0, align = "center")  
+                font_size = 11) %>%
+  row_spec(0, align = "center")
 ```
 
 @tbl-description-of-categorical-variables shows the frequency of three categorical variables. The binary variable quality_bin is nearly balanced, with 509 poor-quality(0) and 527 good-quality(1) samples, ensuring a robust baseline for logistic regression. For mean-altitude of the growers farm(in meters), most samples are concentrated at higher elevations: upper altitude has 321 samples and upper-middle altitude has 315 samples, indicating a potential focus on high-altitude coffee production. Samples in lower and middle altitude groups are smaller,which is 117 and 139. 144 samples have missing altitude data, which is used as the reference group. Harvest year span 2010-2018, with the largest concentrations in 2012-2014, respectively has 283, 148 and 215 samples. Fewer samples in early(2010-2011) and late(2017-2018) years.
 
-```{r}
+```{r summary statistics}
 #| echo: false
 #| warning: false
 #| message: false
@@ -136,7 +137,7 @@ The count of category_two_defects performs an obvious right-skewed distribution 
 
 Overall, the three sensory quality indicators of the coffee samples all show well at a moderate-to-high level with low dispersion and high consistency, while the category two defect count shows strong heterogeneity with a right-skewed distribution and extreme values, maybe log transformation is needed.
 
-```{r}
+```{r boxplot}
 #| label: fig-boxplot-quantitative-variables
 #| echo: false
 #| message: false
@@ -204,9 +205,10 @@ panel_coffee_boxplot <- arrangeGrob(p1, p2, p3, ncol = 3)
 # Draw the plot
 grid.draw(panel_coffee_boxplot)
 ```
+
 This set of boxplots clearly illustrates the real differences in aroma, flavor, acidity, and defect count between high-quality coffee and low-quality coffee. The overall level of aroma, flavor, and acidity in the high-quality group is higher, the data distribution is more concentrated, and the quality performance is more stable. The sensory indicators of the low-quality group are significantly lower, and the number of defects is much higher than that of the high-quality group, with greater data fluctuations and more outliers. Overall, these variables can effectively distinguish the quality level of coffee and provide intuitive basis for subsequent statistical analysis.
 
-```{r}
+```{r pairplot}
 #| label: fig-pairplot
 #| echo: false
 #| message: false
@@ -221,9 +223,10 @@ coffeedata %>%
   theme(panel.background = element_rect(fill = "white"),
         panel.grid = element_blank())
 ```
+
 @fig-pairplot performs that there is a significant positive correlation between the three sensory indicators of coffee aroma, flavor, and acidity, with correlation coefficients above 0.6. The distribution of each variable is concentrated and the shape is stable. This high correlation suggests that we should pay attention to multicollinearity issues to ensure the stability and reliability of model parameter estimation.
 
-```{r}
+```{r density and boxplot}
 #| label: fig-density-boxplot-defects
 #| echo: false
 #| message: false
@@ -279,9 +282,10 @@ panel_coffee_defects <- arrangeGrob(density_original, density_log,
 # Draw the plot
 grid.draw(panel_coffee_defects)
 ```
+
 @fig-density-boxplot-defects highlights the distribution characteristics and inter group differences of category_two_defects in the batch of coffee tested before and after logarithmic transformation. The original defects count shows a severe right skewed distribution, with a large number of extreme values, making it difficult to visually reflect the differences between groups in the box plot. After logarithmic transformation, the skewness of the data is significantly reduced, and the distribution becomes more concentrated and symmetrical. The transformed boxplot clearly reveals that the median number of defects in the Poor group is higher than that in the Good group, and the differences between groups are more distinct. This not only preserves the core information of the data, but also provides a more reasonable distribution pattern for subsequent statistical modeling.
 
-```{r}
+```{r barplot}
 #| label: fig-barplot
 #| echo: false
 #| message: false
@@ -327,4 +331,6 @@ final_plot <- arrangeGrob(panel_plots, add_legend, nrow = 2, heights = c(8,1))
 # draw the plot
 grid.draw(final_plot)
 ```
+
 @fig-barplot clearly shows the distribution differences of coffee quality in harvest years and altitude gradients. On the year dimension, the quantity of high-quality coffee and low-quality coffee fluctuates between different years, with some years having a higher proportion of high-quality coffee, reflecting the quality differences between years. In terms of altitude, there are significantly more low-quality coffee in high-altitude areas, and high-quality coffee is also concentrated in the mid to high altitude range, while the quality distribution is relatively balanced in samples with low altitude and missing altitude data. Overall, the correlation between altitude gradient and coffee quality is more intuitive, and the quality differentiation of high-altitude samples is more significant. The year reflects the annual fluctuation characteristics of quality.
+
