@@ -1,0 +1,629 @@
+---
+title: "Group_11"
+format:
+  html:
+    theme: cosmo
+    toc: true
+    self-contained: true
+editor: visual
+---
+
+# Introduction
+
+Coffee quality is a key link connecting producer profits and consumer experience. It not only directly determines market value, but also affects the sustainable development of the coffee industry. This study relies on the real production records of the Coffee Quality Database (CQD), focusing on the three core sensory indicators of aroma, flavor, and acidity, as well as key production characteristics such as the number of category_t_defects, average planting altitude, and harvest year. We conducted a systematic exploratory analysis of the data and constructed a generalized linear model (GLM), which clearly revealed the direction and strength of the impact of each feature on coffee quality classification. The research results provide guidance for producers to help improve coffee quality.
+
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+#load the packages
+library(tidyverse)
+library(naniar) 
+library(ggplot2)
+library(tidyr)
+library(skimr)
+library(knitr)
+library(dplyr)
+library(kableExtra)
+library(gridExtra)
+library(grid)
+library(GGally)
+library(flextable)
+library(officer)
+library(broom)
+library(car)
+```
+
+```{r data cleaning}
+#| echo: false
+#| warning: false
+#| message: false
+#| results: 'hide'
+#| include: false
+data <- read.csv("dataset11.csv")
+glimpse(data)
+summary(data)
+#check the information of missing values
+miss_var_summary(data)
+
+#remove missing values
+coffeedata <- data %>%
+  drop_na(harvested, country_of_origin,altitude_mean_meters)
+miss_var_summary(coffeedata)
+
+#find the unreasonable values in altitude_mean_meters
+ggplot(coffeedata, aes(x = 1, y = altitude_mean_meters)) +
+  geom_point(size = 1.5)
+
+#It is clear that there are two points higher than 100000 meters, which is unreasonable for planting coffee. So we have to remove them.
+coffeedata <- coffeedata%>%
+  filter(altitude_mean_meters < 10000 | is.na(altitude_mean_meters))
+
+#histogram and box plot about the distribution and outliers of altitude_mean_meters
+ggplot(coffeedata, aes(x = altitude_mean_meters)) +
+  geom_histogram(bins = 30, color = "black", fill = "gray80") +
+  labs(title = "Distribution of Coffee Planting Altitude",
+       x = "Altitude (meters)",
+       y = "Frequency") +
+  theme_minimal()
+#from the distribution of altitude_mean_meters, on the right side (approximately greater than 2500 meters), there is a long tail feature and the sample size is extremely small.
+ggplot(coffeedata, aes(y = altitude_mean_meters)) +
+  geom_boxplot(fill = "gray80", width = 0.3) +
+  geom_hline(yintercept = 2500, color = "red", linetype = "dashed", linewidth = 1) +
+  labs(title = "Boxplot of Coffee Planting Altitude",
+       y = "Altitude (meters)") +
+  theme_minimal() +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+sum(coffeedata$altitude_mean_meters >= 2500, na.rm = TRUE)
+
+#Here we found through research that the maximum height for conventional coffee cultivation is 2500 meters. From the box plot we can also find there are only 12 samples over 2500 meter, which are outliers, so we can delete them.
+coffeedata <- coffeedata %>%
+  filter(altitude_mean_meters < 2500 | is.na(altitude_mean_meters))
+
+#Considering the impact of variable numerical scale on model estimation, the altitude is converted from meters to kilometers to reduce the difference in variable magnitude.
+coffeedata$altitude_km <- coffeedata$altitude_mean_meters / 1000
+
+#remove unnecessary columns
+coffeedata <- coffeedata %>% 
+  select(-country_of_origin, -altitude_mean_meters)
+
+#For logistic regression models, the dependent variable should be of factor type. but the Qualityclass is chr type, so we have to turn it into factor.
+coffeedata$Qualityclass <- factor(
+  coffeedata$Qualityclass,
+  levels = c("Poor", "Good")
+)
+str(coffeedata)
+
+```
+
+We systematically processed the original coffee dataset to ensure the reliability of subsequent modeling and analysis.
+
+Firstly, we check the data structure and missing values, and remove invalid samples with missing key variables. Then, outlier screening was performed on the average altitude. Through visualization, it was found that there were two extreme values exceeding 100000 meters, which obviously do not match the actual coffee cultivation and have been removed. Further examination through histograms and boxplots revealed that there were 12 extreme samples with elevations exceeding 2500 meters, which were also deleted.
+
+In order to standardize the numerical scale, we converted the average altitude from meters to kilometers. Subsequently, unnecessary columns were removed and the coffee quality variable was converted into a factor variable.
+
+# Exploratory Analysis
+
+```{r description table}
+#| echo: false
+#| warning: false
+#| message: false
+#| label: tbl-description-of-Qualityclass
+#| tbl-cap: Description of Qualityclass
+#| 
+#description of Qualityclass
+quality_table <- coffeedata %>%
+  count(Qualityclass, name = "Frequency") %>%  
+  mutate(Variable = "Qualityclass") %>%       
+  select(Variable,Category = Qualityclass, Frequency)
+
+#Convert the table to a format that complies with academic standards
+# Width of thick lines
+line_width_thick <- 1.6
+# Width of thin lines
+line_width_thin <- 0.8
+# Get a flextable
+ft_overall <- flextable(quality_table)
+# Remove all default borders
+ft_overall <- border_remove(ft_overall)
+# Bold the header
+ft_overall <- bold(ft_overall, part = "header")
+# Thick top rule
+ft_overall <- hline_top(ft_overall, part = "header", border = fp_border(width = line_width_thick))
+# Thick rule below the header
+ft_overall <- hline(ft_overall, part = "header", border = fp_border(width = line_width_thick))
+# Thick bottom rule
+ft_overall <- hline_bottom(ft_overall, border = fp_border(width = line_width_thick))
+ft_overall <- align(ft_overall, align = "center", part = "all")
+ft_overall
+```
+
+@tbl-description-of-Qualityclass shows the frequency of categorical variable. The variable Qualityclass is a binary categorical variable, consisting of two levels: "Good" (high-quality coffee) and "Poor" (low-quality coffee). The sample distribution is highly balanced, with 444 high-quality coffee samples (accounting for 50.5%) and 436 low-quality coffee samples (accounting for 49.5%). There is no problem of category imbalance, which can ensure the stability of subsequent models.
+
+```{r summary statistics}
+#| echo: false
+#| warning: false
+#| message: false
+#| label: tbl-summary-of-quantitative-variables
+#| tbl-cap: summary of quantitative variables
+#summary of the quantitative variables
+vars <- c("aroma", "flavor", "acidity", "category_two_defects","harvested","altitude_km")
+summary_table <- data.frame(
+  Mean = apply(coffeedata[vars], 2, function(x) round(mean(x, na.rm=T), 2)),
+  Median = apply(coffeedata[vars], 2, function(x) round(median(x, na.rm=T), 2)),
+  SD = apply(coffeedata[vars], 2, function(x) round(sd(x, na.rm=T), 2)),
+  Min = apply(coffeedata[vars], 2, function(x) round(min(x, na.rm=T), 2)),
+  Max = apply(coffeedata[vars], 2, function(x) round(max(x, na.rm=T), 2)),
+  IQR = apply(coffeedata[vars], 2, function(x) round(IQR(x, na.rm=T), 2))) %>%
+  rownames_to_column("Variable")
+
+#Convert the table to a format that complies with academic standards
+line_width_thick <- 1.6
+line_width_thin <- 0.8
+ft_overall <- flextable(summary_table)
+ft_overall <- border_remove(ft_overall)
+ft_overall <- bold(ft_overall, part = "header")
+ft_overall <- hline_top(ft_overall, part = "header", border = fp_border(width = line_width_thick))
+ft_overall <- hline(ft_overall, part = "header", border = fp_border(width = line_width_thick))
+ft_overall <- hline_bottom(ft_overall, border = fp_border(width = line_width_thick))
+ft_overall <- align(ft_overall, align = "center", part = "all")
+ft_overall
+```
+
+@tbl-summary-of-quantitative-variables shows the descriptive statistics of the key quantitative variables of coffee samples, including three sensory quality indicators, one defect count indicator, one harvest year indicator and one indicator of average planting altitude.
+
+Aroma scores fall in a moderate-to-high range with a mean value of 7.57 and a median value of 7.58, indicating a highly similar distribution. The standard deviation is only 0.32, with minimal fluctuations, indicating that there is not much difference in aroma scores between samples, and the overall concentration is at a relatively high level.
+
+Flavor score is similar to the aroma performance, which remains stable and concentrated at a medium to high level.
+
+Acidity also maintains a moderate-to-high scoring level, with a mean of 7.54 and a median of 7.50, while the standard deviation is 0.31, which is the smallest fluctuation among the three sensory indicators, indicating that acidity is the most stable performance.
+
+The mean number of category_two_defects is 3.51, but the median is only 2.00, the standard deviation is as high as 5.24 and the maximum value reaches 45.00, indicating a significant right bias in the data. Most samples have fewer defects, but there are a few extreme samples with extremely many defects.
+
+The harvest years are concentrated between 2010 and 2018, with a standard deviation of 1.81, indicating a small sample time span and compact year distribution.
+
+The average altitude is 1.30km, the median is 1.31km, and the distribution is approximately symmetrical. The standard deviation is 0.41, with a maximum value of 2.14km and a minimum value of 0.00km, indicating that the sample covers coffee planting areas from low to high altitudes, and is generally concentrated at a suitable planting height of around 1.3km.
+
+In summary, the mean and median of the three sensory indicators are close, the standard deviation and IQR are small, and the distribution is symmetrical and concentrated. The categorization shows a right skewed feature.
+
+The above is a descriptive statistical summary of the research data. Based on this, visual analysis is used to further visualize the distribution patterns and data characteristics of each variable.
+
+```{r pairplot}
+#| label: fig-pairplot
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-align: center
+#| fig-cap: pair plot of variables
+#a pair plot to show the correlation and distribution of these variables. At first it contains the variable 'harvested', but it shows non-relationship to other variables and in order to keep the ensure the cleanliness of the image, we remove 'harvested' in the pair plot
+coffeedata %>%
+  select(aroma, flavor, acidity,altitude_km,category_two_defects) %>%
+  ggpairs()+
+  theme_bw()+
+  theme(panel.background = element_rect(fill = "white"),
+        panel.grid = element_blank())
+```
+
+This pair plot comprehensively presents the distribution and correlations of these variables.
+
+The diagonal density curve shows that the three sensory indicators of aroma, flavor, and acidity exhibit an approximately symmetrical unimodal distribution. There is a double peak in the harvest year. The number of category_two_defects exhibits a clear right-skewed long tail feature.
+
+The correlation coefficients between aroma, flavor, and acidity are all above 0.6, indicating a strong positive correlation among the three. The average altitude is weakly positively correlated with sensory indicators, while the defects is weakly negatively correlated with sensory indicators. Overall, there may be collinearity issues within sensory indicators.
+
+```{r boxplot}
+#| label: fig-boxplot-sensory-quality-indicators
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-align: center
+#| fig-cap: Boxolot of aroma,flavor and acidity
+# Function of getting legend from a plot
+get_legend <- function(p){
+  g <- ggplotGrob(p)
+  for (i in seq_along(g$grobs)){
+    if (g$grobs[[i]]$name == "guide-box"){
+      return(g$grobs[[i]])
+    }
+  }
+}
+#create a color for the plot
+my_color <- c("#4292db", "#E8785A")
+aroma_box <- coffeedata %>%
+  ggplot(aes(x = factor(Qualityclass,
+                        labels=c("Poor","Good")),
+             y = aroma,
+             fill=factor(Qualityclass)))+
+  scale_fill_manual(values = my_color)+
+  geom_boxplot(alpha=0.9)+
+  labs(x="Qualityclass", y="Aroma", fill="Qualityclass")+
+  theme(panel.background = element_rect(fill = "white", color = NA),
+        panel.grid.major = element_line(color = "gray90"),
+        axis.title = element_text(size = 8))
+
+flavor_box <- coffeedata %>%
+  ggplot(aes(x = factor(Qualityclass,
+                        labels=c("Good","Poor")),
+             y =flavor,
+             fill=factor(Qualityclass)))+
+  scale_fill_manual(values = my_color)+
+  geom_boxplot(alpha=0.9)+
+  labs(x="Qualityclass", y="Flavor", fill="Qualityclass")+
+  theme(panel.background = element_rect(fill = "white", color = NA),
+        panel.grid.major = element_line(color = "gray90"),
+        axis.title = element_text(size = 8)) 
+
+acidity_box <- coffeedata %>%
+  ggplot(aes(x = factor(Qualityclass,
+                        labels=c("Good","Poor")),
+             y = acidity,
+             fill=factor(Qualityclass)))+
+  scale_fill_manual(values = my_color)+
+  geom_boxplot(alpha=0.9)+
+  labs(x="Qualityclass", y="Acidity", fill="Qualityclass")+
+  theme(panel.background = element_rect(fill = "white", color = NA),
+        panel.grid.major = element_line(color = "gray90"),
+        axis.title = element_text(size = 8))
+
+# Get a legend
+legend_boxplot <- get_legend(aroma_box)
+
+# Remove all the legends
+aroma_box <- aroma_box + theme(legend.position = "none")
+flavor_box <- flavor_box + theme(legend.position = "none")
+acidity_box <- acidity_box + theme(legend.position = "none")
+
+# Create a panel
+panel_coffee_boxplot <- arrangeGrob(aroma_box, flavor_box, acidity_box, ncol = 3)
+
+# Draw the plot
+grid.draw(panel_coffee_boxplot)
+```
+
+This set of boxplots clearly shows the distribution differences between high-quality and low-quality coffee in three sensory indicators. The aroma, flavor, and acidity scores of high-quality coffee are generally higher, and the data is more concentrated and stable. Low quality coffee has lower scores, greater fluctuations, and more outliers in low scores. The characteristics of the two sets of outliers are also significantly different, with higher values in the high-quality group and lower values in the low-quality group. Overall, these sensory indicators can effectively distinguish coffee quality and provide intuitive basis for subsequent statistical analysis.
+
+```{r histogram of average planting altitude}
+#| label: fig-histogram-altitude
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-align: center
+#| fig-cap: histogram of altitude_km
+#draw a histogram of average planting altitude to show the distribution 
+ggplot(coffeedata, aes(x = altitude_km, fill = Qualityclass)) +
+  geom_histogram(alpha = 0.9, bins = 20,
+                 position = "dodge",
+                 color = "white", linewidth = 0.1) +
+  scale_fill_manual(values = my_color) +
+  labs(x = "Altitude (kilometers)",
+       y = "Frequency",
+       fill = "Quality") +
+  theme_minimal(base_size = 14)
+```
+
+@fig-histogram-altitude shows that altitude distribution of coffee of different qualities shows significant differences. High quality samples are mainly concentrated at altitudes of 1.5-1.8 kilometers, while low-quality samples are more concentrated at altitudes of 1.0-1.3 kilometers, with an overall bias towards low altitudes. The proportion of high-quality coffee is higher in high-altitude (\>1.5 kilometers) areas, while the frequency of low-quality coffee is higher in low-altitude (\<1.2 kilometers) areas. This indicates that the higher the altitude, the more likely the coffee quality is to improve, providing an intuitive evidence for the positive correlation between altitude and coffee quality.
+
+```{r histogram of defects}
+#| label: fig-histogram-defects
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-align: center
+#| fig-cap: histogram of defects
+#draw a histogram of category_two_defects to show the difference distribution of the defects number in different coffee qualities.
+ggplot(coffeedata, aes(x = category_two_defects, fill = Qualityclass)) +
+  geom_histogram(alpha = 0.9, bins = 20,
+                 position = "dodge",
+                 color = "white", linewidth = 0.1) +
+  scale_fill_manual(values = my_color) +
+  labs(x = "defects of two category",
+       y = "Frequency",
+       fill = "Quality") +
+  theme_minimal(base_size = 14)
+```
+
+@fig-histogram-defects shows the distribution of the number of category_two_defects in coffee of different qualities varies significantly. Overall, the number of defects shows a right skewed distribution, with most samples concentrated in the low range of 0-5 defects, and a peak formed on the left side. High quality coffee is almost entirely concentrated on 0-5 defects, and as the number of defects increases, the sample frequency rapidly decreases. In contrast, low-quality coffee has a wider distribution of defects, with samples containing 0-10 defects, and a significantly higher number of high defect segments. This difference clearly indicates that the number of defects can effectively distinguish coffee quality, and samples with fewer defects are more likely to belong to the high-quality group.
+
+```{r harvested plot}
+#| label: fig-bar-harvested
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-align: center
+#| fig-cap: harvested stacked percentage bar plot
+#draw the stacked percentage bar plot to show the proportion of good coffee and poor coffee in each year and explore the relationship between harvested year and coffee quality
+ggplot(coffeedata, aes(x = as.factor(harvested), fill = Qualityclass)) +
+  geom_bar(position = "fill", alpha = 0.9,width = 0.6) +
+  scale_fill_manual(values = my_color) +
+  labs(x = "Harvest Year",
+       y = "Proportion",
+       fill = "Quality") +
+  theme_minimal()
+```
+
+@fig-bar-harvested shows the proportion distribution of coffee quality in each year from 2010 to 2018. From the plot, it can be seen that the quality of coffee fluctuates greatly in different years and lacks a stable trend. For example, in 2011, high-quality coffee accounted for about 75%, while in 2012, low-quality coffee exceeded 60%. This indicates that the harvest year has little to do with coffee quality and has limited impact on predicting quality.
+
+Exploratory analysis focuses on multidimensional visualization of coffee quality related variables, clarifying the direction of variable selection for subsequent modeling.
+
+# Formal Analysis
+
+## Model Specification
+
+Based on the exploratory data analysis, a binomial generalized linear model (GLM), specifically a logistic regression model, is used to model the probability that a coffee batch is classified as good quality.
+
+The response variable is binary, taking the value 1 for good quality coffee and 0 for poor quality coffee, which makes logistic regression an appropriate modelling choice.
+
+The predictors included in the initial model are selected based on insights from the EDA. Sensory attributes (aroma, flavor, and acidity) showed strong positive associations with coffee quality, while defect counts exhibited a skewed distribution and a negative relationship with quality. Altitude and harvest year are also included as potential explanatory variables due to their observed variation across quality groups.
+
+The initial model can therefore be expressed as:
+
+$$
+\begin{aligned}
+\mathrm{logit}(P(\text{Good})) ={}& \beta_0 + \beta_1 \cdot \text{flavor} + \beta_2 \cdot \text{aroma} + \beta_3 \cdot \text{acidity} \\
+&+ \beta_4 \cdot \text{altitude\_km} + \beta_5 \cdot \text{harvested} + \beta_6 \cdot \text{category\_two\_defects}
+\end{aligned}
+$$
+
+## Initial Model Fitting
+
+```{r fitting logistic regression model}
+#| echo: false
+#| warning: false
+#| message: false
+#| label: tbl-logistic
+#| tbl-cap: coefficient of full model
+model_full <- glm(
+  Qualityclass ~ aroma + flavor + acidity +
+                category_two_defects +
+                altitude_km +
+                harvested,
+  family = binomial(link = "logit"),
+  data = coffeedata
+)
+
+coef_table <- tidy(model_full) %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  rename(
+    Term = term,
+    Estimate = estimate,
+    `Std. Error` = std.error,
+    `z value` = statistic,
+    `p value` = p.value
+  ) %>%
+  mutate(across(where(is.numeric), ~round(., 3)))
+
+#Convert the table to a format that complies with academic standards
+line_width_thick <- 1.6
+line_width_thin <- 0.8
+ft_overall <- flextable(coef_table)
+ft_overall <- border_remove(ft_overall)
+ft_overall <- bold(ft_overall, part = "header")
+ft_overall <- hline_top(ft_overall, part = "header", border = fp_border(width = line_width_thick))
+ft_overall <- hline(ft_overall, part = "header", border = fp_border(width = line_width_thick))
+ft_overall <- hline_bottom(ft_overall, border = fp_border(width = line_width_thick))
+ft_overall <- align(ft_overall, align = "center", part = "all")
+ft_overall
+
+```
+
+The initial logistic regression model includes all candidate predictors. A binomial GLM with logit link was fitted to investigate how sensory attributes, defect counts, altitude groups and harvest year influence the probability of a coffee batch being classified as good quality.
+
+@tbl-logistic indicates that aroma, flavor, and acidity have strong positive effects on the probability of good quality coffee, while altitude and harvest year also show statistically significant positive associations.
+
+In contrast, the defect variable is not statistically significant in the full model, suggesting that its effect may be captured by other correlated variables or may require transformation.
+
+## Model selection
+
+```{r model selection in stepwise}
+#| echo: false
+#| warning: false
+#| message: false
+# stepwise selecting model via AIC
+null_model <- glm(Qualityclass ~ 1,
+                  data = coffeedata,
+                  family = binomial)
+step_model <- step(null_model, 
+                   scope = list(lower = null_model, upper = model_full),
+                   direction = "both",
+                   trace = FALSE)
+```
+
+A stepwise model selection procedure based on AIC was applied to refine the initial logistic regression model. For clarity, the selection path is summarised in Table X rather than presenting the full console output.
+
+```{r AIC}
+#| warning: false
+#| message: false
+#| echo: false
+#| label: tbl-AIC
+#| tbl-cap: outcome of stepwise
+stepwise_aic <- data.frame(
+  Step = c("Step 0", "Step 1", "Step 2", "Step 3", "Step 4", "Step 5"),
+  Model = c(
+    "Null model",
+    "flavor",
+    "flavor + aroma",
+    "flavor + aroma + acidity",
+    "flavor + aroma + acidity + altitude_km",
+    "flavor + aroma + acidity + altitude_km + harvested"
+  ),
+  AIC = c(1221.87, 645.37, 575.75, 538.15, 533.79, 527.73)
+)
+#Convert the table to a format that complies with academic standards
+line_width_thick <- 1.6
+line_width_thin <- 0.8
+ft_overall <- flextable(stepwise_aic)
+ft_overall <- border_remove(ft_overall)
+ft_overall <- bold(ft_overall, part = "header")
+ft_overall <- hline_top(ft_overall, part = "header", border = fp_border(width = line_width_thick))
+ft_overall <- hline(ft_overall, part = "header", border = fp_border(width = line_width_thick))
+ft_overall <- hline_bottom(ft_overall, border = fp_border(width = line_width_thick))
+ft_overall <- set_table_properties(ft_overall, layout = "autofit")
+ft_overall <- align(ft_overall, align = "center", part = "all")
+ft_overall <- colformat_num(ft_overall, digits = 3, na_str = "")
+ft_overall
+
+```
+
+@tbl-AIC summarises the stepwise AIC selection process. The AIC decreases substantially as flavor, aroma, acidity, altitude, and harvest year are added to the model, indicating progressive improvement in model fit. The final selected model has the lowest AIC of 527.73, suggesting that it provides the best trade-off between explanatory power and model complexity.
+
+```{r final}
+#| warning: false
+#| message: false
+#| echo: false
+#| label: tbl-final
+#| tbl-cap: outcome of final model
+
+final_model_table <- tidy(step_model) %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  rename(
+    Term = term,
+    Estimate = estimate,
+    `Std. Error` = std.error,
+    `z value` = statistic,
+    `p value` = p.value
+  )%>%
+  mutate(across(where(is.numeric), ~round(., 3)))
+#Convert the table to a format that complies with academic standards
+line_width_thick <- 1.6
+line_width_thin <- 0.8
+ft_overall <- flextable(final_model_table)
+ft_overall <- border_remove(ft_overall)
+ft_overall <- bold(ft_overall, part = "header")
+ft_overall <- hline_top(ft_overall, part = "header", border = fp_border(width = line_width_thick))
+ft_overall <- hline(ft_overall, part = "header", border = fp_border(width = line_width_thick))
+ft_overall <- hline_bottom(ft_overall, border = fp_border(width = line_width_thick))
+ft_overall <- align(ft_overall, align = "center", part = "all")
+ft_overall
+```
+
+@tbl-final presents the coefficient estimates for the final selected logistic regression model. Flavor, aroma, acidity, altitude, and harvest year all have positive estimated coefficients, indicating that increases in these variables are associated with a higher probability of good coffee quality. All retained predictors are statistically significant at the 5% level, supporting their contribution to the final model.
+
+## Model Diagnositic
+
+### Fitted Probability vs Observed
+
+```{r diagnositic}
+#| warning: false
+#| message: false
+#| echo: false
+#| label: fig-fitted_observed
+#| fig-cap: Predicted probability vs observed coffee quality
+
+coffeedata$pred_prob <- predict(step_model, type = "response")
+
+ggplot(coffeedata, aes(x = pred_prob, y = factor(Qualityclass))) +
+  geom_jitter(height = 0.1, alpha = 0.4) +
+  labs(
+    x = "Predicted probability of good coffee",
+    y = "Observed quality class"
+  ) +
+  theme_minimal()
+```
+
+@fig-fitted_observed compares the predicted probabilities with the observed quality classes.
+
+Observations classified as good tend to have higher predicted probabilities, while poor-quality samples are associated with lower predicted values.
+
+The separation between the two groups indicates that the model has a reasonable ability to distinguish between good and poor coffee.
+
+### Residual Plot
+
+```{r residual plot}
+#| warning: false
+#| message: false
+#| echo: false
+#| label: fig-residual
+#| fig-cap: Deviance residuals vs fitted values
+res <- residuals(step_model, type = "deviance")
+fit <- fitted(step_model)
+
+ggplot(data.frame(fit, res), aes(x = fit, y = res)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(se = FALSE) +
+  labs(
+    x = "Fitted probability",
+    y = "Deviance residuals"
+  ) +
+  theme_minimal()
+```
+
+@fig-residual shows the relationship between deviance residuals and fitted probabilities.
+
+The absence of strong systematic patterns suggests that the model fits the data reasonably well.
+
+However, some curvature is visible, which may indicate mild model misspecification or nonlinearity that could be explored in future improvements.
+
+### VIF
+
+```{r vif}
+#| message: false
+#| echo: false
+#| label: tbl-vif
+#| tbl-cap: "VIF For the Model"
+
+vif_values <- vif(step_model)
+vif_table <- data.frame(
+  Variable = names(vif_values),
+  VIF=as.numeric(vif_values)
+)%>%
+  mutate(across(where(is.numeric), ~round(., 3)))
+#Convert the table to a format that complies with academic standards
+line_width_thick <- 1.6
+line_width_thin <- 0.8
+ft_overall <- flextable(vif_table)
+ft_overall <- border_remove(ft_overall)
+ft_overall <- bold(ft_overall, part = "header")
+ft_overall <- hline_top(ft_overall, part = "header", border = fp_border(width = line_width_thick))
+ft_overall <- hline(ft_overall, part = "header", border = fp_border(width = line_width_thick))
+ft_overall <- hline_bottom(ft_overall, border = fp_border(width = line_width_thick))
+ft_overall <- align(ft_overall, align = "center", part = "all")
+ft_overall
+```
+
+The @tbl-vif indicating that multicollinearity is not a serious concern in the final model.
+
+Although sensory variables were moderately correlated in the exploratory analysis, their combined inclusion does not lead to problematic inflation of variance.
+
+## Interpretation of results
+
+### Odds ratio
+
+```{r odds ratio}
+#| warning: false
+#| message: false
+#| echo: false
+#| label: fig-OR
+#| fig-cap: Odds ratios with 95% confidence intervals
+or_data <- tidy(step_model, conf.int = TRUE, exponentiate = TRUE) %>%
+  filter(term != "(Intercept)")
+
+ggplot(or_data, aes(x = estimate, y = reorder(term, estimate))) +
+  geom_point(alpha = 0.8) +
+  geom_errorbarh(aes(xmin = conf.low, xmax = conf.high), height = 0.2) +
+  geom_vline(xintercept = 1, linetype = "dashed") +
+  scale_x_log10() +
+  labs(
+    x = "Odds ratio (log scale)",
+    y = "Predictor"
+  ) +
+  theme_minimal()
+```
+
+@fig-OR provides an interpretable measure of effect size for each predictor.
+
+Flavor, aroma, and acidity show very large odds ratios, indicating strong positive effects on the probability of good quality coffee.
+
+Altitude also has a positive effect, while harvest year shows a smaller but statistically significant impact.
+
+Overall, sensory variables are the dominant factors influencing coffee quality, while environmental variables play a secondary role.
+
+# Conclusion
+
+In conclusion, this study identifies sensory attributes and production characteristics as key determinants of coffee quality.
+
+Exploratory analysis reveals that aroma, flavor, and acidity are strongly associated with higher quality, while defect counts negatively affect quality.
+
+The logistic regression model confirms these findings, showing that sensory variables are the most influential predictors, with altitude and harvest year also contributing to the classification.
+
+Model diagnostics indicate that the model provides a reasonable fit and can effectively distinguish between good and poor coffee.
+
+However, further improvements could include exploring nonlinear effects or alternative modelling approaches to enhance predictive performance.
