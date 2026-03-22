@@ -1,0 +1,286 @@
+---
+title: "FDA_GP11"
+format: 
+  html:
+    toc: true
+    toc-location: left
+    toc-title: "Outline"
+    number-sections: true
+    smooth-scroll: true
+    page-layout: article
+editor: visual
+---
+
+# Transition from EDA to modelling
+
+Based on the exploratory analysis, the response variable is approximately balanced, several predictors show clear differences across quality groups, and some continuous variables exhibit skewness or correlation. Therefore, we proceed to fit a binomial Generalised Linear Model (logistic regression) to investigate which factors influence the probability of a coffee batch being classified as good quality.
+
+# Model Specification
+
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+#load the packages
+library(tidyverse)
+library(naniar) 
+library(ggplot2)
+library(tidyr)
+library(skimr)
+library(knitr)
+library(dplyr)
+library(kableExtra)
+library(gridExtra)
+library(grid)
+library(GGally)
+data <- read.csv("dataset11.csv")
+glimpse(data)
+
+summary(data)
+miss_var_summary(data)
+
+coffeedata <- data %>%
+  drop_na(harvested, country_of_origin)
+nrow(coffeedata)
+summary(coffeedata)
+
+coffeedata <- coffeedata%>%
+  filter(altitude_mean_meters < 10000 | is.na(altitude_mean_meters))
+nrow(coffeedata)
+
+coffeedata <- coffeedata %>%
+  mutate(
+    altitude_group = case_when(
+      is.na(altitude_mean_meters) ~ "missing altitude",
+      altitude_mean_meters < 900 ~ "lower altitude",
+      altitude_mean_meters < 1200 ~ "middle altitude",
+      altitude_mean_meters < 1500 ~ "upper-middle altitude",
+      TRUE ~ "upper altitude"
+    )
+  )
+coffeedata <- coffeedata %>%
+  mutate(
+    quality_bin = case_when(
+      Qualityclass == "Good" ~ 1,
+      Qualityclass == "Poor" ~ 0
+    )
+  )
+glimpse(coffeedata)
+coffeedata$log_defects <- log(ifelse(coffeedata$category_two_defects == 0, 
+                                     coffeedata$category_two_defects + 1, 
+                                     coffeedata$category_two_defects))
+str(coffeedata)
+
+
+model_data <- coffeedata %>%
+  select(quality_bin, aroma, flavor, acidity,
+         log_defects, altitude_group, harvested) %>%
+  na.omit() %>%
+  filter(altitude_group != "missing altitude")
+
+str(model_data)
+summary(model_data)
+
+model_data$altitude_group <- factor(model_data$altitude_group)
+
+
+table(model_data$quality_bin)
+```
+
+# Initial logistic regression model
+
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+#| tbl-cap: coefficient of full model
+model_full <- glm(
+  quality_bin ~ aroma + flavor + acidity +
+                log_defects +
+                altitude_group +
+                harvested,
+  family = binomial(link = "logit"),
+  data = model_data
+)
+
+library(broom)
+
+coef_table <- tidy(model_full) %>%
+  select(term, estimate, std.error, statistic, p.value) %>%
+  rename(
+    Term = term,
+    Estimate = estimate,
+    `Std. Error` = std.error,
+    `z value` = statistic,
+    `p value` = p.value
+  )
+
+coef_table %>%
+  kable(
+    caption = "Coefficient estimates for the initial logistic regression model",
+    align = "ccccc",
+    booktabs = TRUE,
+    digits = 3
+  ) %>%
+  kable_styling(
+    latex_options = "hold_position",
+    font_size = 11
+  ) %>%
+  row_spec(0, align = "center")
+```
+
+A binomial GLM with logit link was fitted to investigate how sensory attributes, defect counts, altitude groups and harvest year influence the probability of a coffee batch being classified as good quality.
+
+To assess whether the predictors included in the initial logistic regression model exhibit problematic multicollinearity, Variance Inflation Factors (VIFs) were calculated. This is particularly relevant because the exploratory analysis suggested relatively strong positive correlations among aroma, flavor and acidity.
+
+# Model selection
+
+```{r}
+# stepwise selecting model via AIC
+null_model <- glm(quality_bin ~ 1,
+                  data = model_data,
+                  family = binomial)
+step_model <- step(null_model, 
+                   scope = list(lower = null_model, upper = model_full),
+                   direction = "both",
+                   trace = TRUE)
+summary(step_model)
+```
+
+# Multicollinearity check
+
+```{r}
+library(car)
+vif_values <- vif(step_model)
+vif_table <- data.frame(
+  Variable = rownames(vif_values),
+  GVIF = vif_values[,1],
+  Df = vif_values[,2],
+  `GVIF^(1/(2*Df))` = vif_values[,3]
+)
+
+vif_table %>%
+  kable(
+    caption = "Variance Inflation Factors for the initial logistic regression model",
+    align = "cccc",
+    booktabs = TRUE,
+    digits = 3
+  ) %>%
+  kable_styling(
+    latex_options = "hold_position",
+    font_size = 11
+  ) %>%
+  row_spec(0, align = "center")
+```
+
+Table X presents the VIF values for all predictors included in the initial model. Overall, the sensory variables show comparatively larger VIF values than the remaining predictors, which is consistent with the correlation patterns observed in the exploratory analysis. These results suggest that multicollinearity should be taken into account in subsequent model refinement.
+
+# Visualising model fit
+
+## Fitted Probability vs Observed
+
+```{r}
+model_data$pred_prob <- predict(step_model, type = "response")
+
+ggplot(model_data, aes(x = pred_prob, y = factor(quality_bin))) +
+  geom_jitter(height = 0.1, alpha = 0.4) +
+  labs(
+    title = "Predicted probability vs observed coffee quality",
+    x = "Predicted probability of good coffee",
+    y = "Observed quality class"
+  ) +
+  theme_minimal()
+```
+
+## Residual Plot
+
+```{r}
+res <- residuals(step_model, type = "deviance")
+fit <- fitted(step_model)
+
+ggplot(data.frame(fit, res), aes(x = fit, y = res)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(se = FALSE) +
+  labs(
+    title = "Deviance residuals vs fitted values",
+    x = "Fitted probability",
+    y = "Deviance residuals"
+  ) +
+  theme_minimal()
+```
+
+## Calibration Plot
+
+```{r}
+model_data <- model_data %>%
+  mutate(pred_prob = predict(model_full, type="response"),
+         prob_bin = cut(pred_prob, breaks = seq(0,1,0.1)))
+
+calibration <- model_data %>%
+  group_by(prob_bin) %>%
+  summarise(
+    mean_prob = mean(pred_prob),
+    observed = mean(quality_bin)
+  )
+
+ggplot(calibration, aes(x = mean_prob, y = observed)) +
+  geom_point(size=3) +
+  geom_abline(slope=1, intercept=0, linetype="dashed") +
+  labs(
+    title="Calibration plot",
+    x="Predicted probability",
+    y="Observed proportion of good coffee"
+  ) +
+  theme_minimal()
+```
+
+# Interpretation of model coefficients
+
+## Odds ratio
+
+```{r}
+library(broom)
+library(dplyr)
+library(ggplot2)
+library(kableExtra)
+
+or_raw <- tidy(model_full, conf.int = TRUE, exponentiate = TRUE)
+
+or_table <- or_raw %>%
+  select(term, estimate, conf.low, conf.high, p.value) %>%
+  rename(
+    Term = term,
+    `Odds Ratio` = estimate,
+    `Lower 95% CI` = conf.low,
+    `Upper 95% CI` = conf.high,
+    `p value` = p.value
+  )
+
+or_table %>%
+  kable(
+    caption = "Odds ratios from the initial logistic regression model",
+    align = "ccccc",
+    booktabs = TRUE,
+    digits = 3
+  ) %>%
+  kable_styling(
+    latex_options = "hold_position",
+    font_size = 11
+  ) %>%
+  row_spec(0, align = "center")
+
+or_plot <- or_raw %>%
+  filter(term != "(Intercept)")
+
+ggplot(or_plot, aes(x = reorder(term, estimate), y = estimate)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  coord_flip() +
+  labs(
+    title = "Odds ratios from the initial logistic regression model",
+    x = "Predictor",
+    y = "Odds ratio"
+  ) +
+  theme_minimal()
+```
